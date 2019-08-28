@@ -17,17 +17,17 @@
 
 package org.apache.spark.sql.execution.direct
 
+import java.util.concurrent.Callable
+
 import scala.util.control.NonFatal
+
+import com.google.common.cache.CacheBuilder
 
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.codegen.CodeGenerator
-import org.apache.spark.sql.execution.{
-  BufferedRowIterator,
-  CodegenSupport,
-  SparkPlan,
-  WholeStageCodegenExec
-}
+import org.apache.spark.sql.catalyst.expressions.codegen.{CodeAndComment, CodegenContext, CodeGenerator}
+import org.apache.spark.sql.execution.{BufferedRowIterator, CodegenSupport, SparkPlan, WholeStageCodegenExec}
+import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.Utils
 
@@ -84,7 +84,9 @@ case class DirectWholeStageCodegenExec(original: WholeStageCodegenExec)
   override protected def doExecute(): Iterator[InternalRow] = {
 
     // TODO cache the cleanedSource for this stage
-    val (ctx, cleanedSource) = original.doCodeGen()
+    val (ctx, cleanedSource) = DirectWholeStageCodegenExec.cache.get(this, new Callable[(CodegenContext, CodeAndComment)] {
+      override def call(): (CodegenContext, CodeAndComment) = original.doCodeGen()
+    })
     // try to compile and fallback if it failed
     val (_, maxCodeSize) = try {
       CodeGenerator.compile(cleanedSource)
@@ -155,4 +157,11 @@ case class DirectWholeStageCodegenExec(original: WholeStageCodegenExec)
     child.generateTreeString(depth, lastChildren, builder, verbose, s"*($codegenStageId) ")
   }
 
+}
+
+object DirectWholeStageCodegenExec {
+  private val cache = CacheBuilder
+    .newBuilder()
+    .maximumSize(1000)
+    .build[DirectWholeStageCodegenExec, (CodegenContext, CodeAndComment)]()
 }
