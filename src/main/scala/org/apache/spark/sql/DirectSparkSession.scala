@@ -20,11 +20,12 @@ package org.apache.spark.sql
 import java.util.Properties
 import java.util.concurrent.Callable
 
-import scala.collection.mutable.{ArrayBuffer, ListBuffer}
+import scala.collection.mutable.ListBuffer
 import scala.reflect.runtime.{universe => ru}
 import scala.util.control.NonFatal
 
 import com.google.common.cache.CacheBuilder
+
 import org.apache.spark.{SparkConf, SparkContext, TaskContext, TaskContextImpl}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config.MEMORY_OFFHEAP_ENABLED
@@ -35,12 +36,7 @@ import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Projection}
 import org.apache.spark.sql.catalyst.expressions.codegen.GenerateSafeProjection
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project, SubqueryAlias}
-import org.apache.spark.sql.execution.direct.{
-  DirectExecutionContext,
-  DirectPlan,
-  DirectPlanConverter,
-  DirectPlanStrategies
-}
+import org.apache.spark.sql.execution.direct.{DirectExecutionContext, DirectPlan, DirectPlanConverter, DirectPlanStrategies}
 import org.apache.spark.sql.internal.{BaseSessionStateBuilder, SessionState, SharedState}
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.Utils
@@ -153,11 +149,36 @@ class DirectSparkSession private (
     }
     val schema = StructType(output.map(attr => StructField(attr.name, attr.dataType)))
     val converter = CatalystTypeConverters.createToScalaConverter(schema)
-    val rows = data.map(converter(_).asInstanceOf[Row])
+    val rows = data.par.map(converter(_).asInstanceOf[Row]).toArray
     DirectDataTable(schema, rows)
   }
 
-  def sqlDirectlyAndRegisterTempView(sqlText: String, name: String): Int = {
+  def tempViewJava(name: String): java.util.List[java.util.Map[String, Any]] = {
+    val identifier = sessionState.sqlParser.parseTableIdentifier(name)
+    val relation = sessionState.catalog.lookupRelation(identifier)
+    val (output, data) = relation match {
+      case SubqueryAlias(_, Project(_, LocalRelation(output, data, _))) =>
+        (output, data)
+      case SubqueryAlias(_, LocalRelation(output, data, _)) =>
+        (output, data)
+      case other => throw new RuntimeException("unexpected Relation[" + other + "]")
+    }
+    val schema = StructType(output.map(attr => StructField(attr.name, attr.dataType)))
+    val columnsWithIdx = output.map(_.name).zipWithIndex
+    val converter = CatalystTypeConverters.createToScalaConverter(schema)
+    import scala.collection.JavaConverters._
+    val rows = data.par.map(e => {
+      val row = converter(e).asInstanceOf[Row]
+      val map: java.util.Map[String, Any] = new java.util.HashMap[String, Any]()
+      columnsWithIdx.map {
+        case (column, idx) => map.put(column, row.get(idx))
+      }
+      map
+    }).toList.asJava
+    rows
+  }
+
+  def executeAndRegisterTempView(sqlText: String, name: String): Int = {
     try {
       SparkSession.setActiveSession(this)
       val (schema, objProj, directExecutedPlan) =
@@ -184,17 +205,12 @@ class DirectSparkSession private (
       // prepare a TaskContext for execution
       TaskContext.setTaskContext(
         new TaskContextImpl(0, 0, 0, 0, 0, taskMemoryManager, new Properties, null))
-      val iter = directExecutedPlan.execute()
-      val buf = ListBuffer[InternalRow]()
-      while (iter.hasNext) {
-        val row = iter.next().copy()
-        buf.append(row)
-      }
+      val data = directExecutedPlan.execute().map(_.copy()).toSeq
       val plan = Dataset
-        .ofRows(self, LocalRelation(schema.toAttributes, buf))
+        .ofRows(self, LocalRelation(schema.toAttributes, data))
         .logicalPlan
       sessionState.catalog.createTempView(name, plan, true)
-      buf.size
+      data.size
     } finally {
       DirectExecutionContext.get().markCompleted()
       TaskContext.unset()
