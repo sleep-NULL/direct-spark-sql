@@ -321,7 +321,6 @@ case class HashAggregateExec(
     * This is called by generated Java class, should be public.
     */
   def createHashMap(): UnsafeFixedWidthAggregationMap = {
-    println("create my createHashMap")
     // create hashMap
     new UnsafeFixedWidthAggregationMap(
       initialBuffer,
