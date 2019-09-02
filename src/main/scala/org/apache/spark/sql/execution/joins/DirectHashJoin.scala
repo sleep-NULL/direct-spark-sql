@@ -87,7 +87,7 @@ trait DirectHashJoin {
   protected def buildSideKeyGenerator(): Projection =
     UnsafeProjection.create(buildKeys)
 
-  protected def streamSideKeyGenerator(): UnsafeProjection =
+  protected val streamSideKeyGenerator: UnsafeProjection =
     UnsafeProjection.create(streamedKeys)
 
   @transient private[this] lazy val boundCondition = if (condition.isDefined) {
@@ -96,7 +96,7 @@ trait DirectHashJoin {
     true
   }
 
-  protected def createResultProjection(): (InternalRow) => InternalRow = joinType match {
+  val createResultProjection: (InternalRow) => InternalRow = joinType match {
     case LeftExistence(_) =>
       UnsafeProjection.create(output, output)
     case _ =>
@@ -110,7 +110,7 @@ trait DirectHashJoin {
       streamIter: Iterator[InternalRow],
       hashedRelation: HashedRelation): Iterator[InternalRow] = {
     val joinRow = new JoinedRow
-    val joinKeys = streamSideKeyGenerator()
+    val joinKeys = streamSideKeyGenerator
     streamIter.flatMap { srow =>
       joinRow.withLeft(srow)
       val matches = hashedRelation.get(joinKeys(srow))
@@ -126,7 +126,7 @@ trait DirectHashJoin {
       streamedIter: Iterator[InternalRow],
       hashedRelation: HashedRelation): Iterator[InternalRow] = {
     val joinedRow = new JoinedRow()
-    val keyGenerator = streamSideKeyGenerator()
+    val keyGenerator = streamSideKeyGenerator
     val nullRow = new GenericInternalRow(buildPlan.output.length)
 
     streamedIter.flatMap { currentRow =>
@@ -158,7 +158,7 @@ trait DirectHashJoin {
   private def semiJoin(
       streamIter: Iterator[InternalRow],
       hashedRelation: HashedRelation): Iterator[InternalRow] = {
-    val joinKeys = streamSideKeyGenerator()
+    val joinKeys = streamSideKeyGenerator
     val joinedRow = new JoinedRow
     streamIter.filter { current =>
       val key = joinKeys(current)
@@ -173,7 +173,7 @@ trait DirectHashJoin {
   private def existenceJoin(
       streamIter: Iterator[InternalRow],
       hashedRelation: HashedRelation): Iterator[InternalRow] = {
-    val joinKeys = streamSideKeyGenerator()
+    val joinKeys = streamSideKeyGenerator
     val result = new GenericInternalRow(Array[Any](null))
     val joinedRow = new JoinedRow
     streamIter.map { current =>
@@ -191,7 +191,7 @@ trait DirectHashJoin {
   private def antiJoin(
       streamIter: Iterator[InternalRow],
       hashedRelation: HashedRelation): Iterator[InternalRow] = {
-    val joinKeys = streamSideKeyGenerator()
+    val joinKeys = streamSideKeyGenerator
     val joinedRow = new JoinedRow
     streamIter.filter { current =>
       val key = joinKeys(current)
