@@ -111,7 +111,9 @@ class DirectSparkSession private (
       // hold current active SparkSession
       DirectExecutionContext.get()
       val taskMemoryManager = new TaskMemoryManager(
-        DirectSparkSession.memoryManager,
+        UnifiedMemoryManager.apply(new SparkConf()
+          .set(MEMORY_OFFHEAP_ENABLED.key, "false")
+          .set("spark.buffer.pageSize", "1m"), 1),
         0)
       // prepare a TaskContext for execution
       TaskContext.setTaskContext(
@@ -203,7 +205,9 @@ class DirectSparkSession private (
       // hold current active SparkSession
       DirectExecutionContext.get()
       val taskMemoryManager = new TaskMemoryManager(
-        DirectSparkSession.memoryManager,
+        UnifiedMemoryManager.apply(new SparkConf()
+          .set(MEMORY_OFFHEAP_ENABLED.key, "false")
+          .set("spark.buffer.pageSize", "1m"), 1),
         0)
       // prepare a TaskContext for execution
       TaskContext.setTaskContext(
@@ -411,10 +415,5 @@ object DirectSparkSession extends Logging {
     .newBuilder()
     .maximumSize(1000)
     .build[String, (StructType, Expression, DirectPlan)]()
-
-  val memoryManager =
-    UnifiedMemoryManager.apply(new SparkConf()
-      .set(MEMORY_OFFHEAP_ENABLED.key, "false")
-      .set("spark.buffer.pageSize", "1m"), 1)
 
 }
