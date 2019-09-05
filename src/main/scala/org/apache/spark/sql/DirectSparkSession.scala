@@ -90,26 +90,28 @@ class DirectSparkSession private (
   def sqlDirectly(sqlText: String): DirectDataTable = {
     try {
       SparkSession.setActiveSession(this)
-      val (schema, objProj, directExecutedPlan) =
-        DirectSparkSession.cache.get(sqlText, new Callable[(StructType, Projection, DirectPlan)] {
-          override def call(): (StructType, Projection, DirectPlan) = {
-            val df = sql(sqlText)
-            val dfMirror = ru.runtimeMirror(getClass.getClassLoader).reflect(df)
-            val deserializerLazyMethodSymbol =
-              ru.typeOf[DataFrame].member(ru.TermName("deserializer")).asMethod
-            val deserializerLazyMethodMirror =
-              dfMirror.reflectMethod(deserializerLazyMethodSymbol)
-            val deserializer = deserializerLazyMethodMirror().asInstanceOf[Expression]
-            val objProj = GenerateSafeProjection.generate(deserializer :: Nil)
-            val directExecutedPlan = DirectPlanConverter.convert(df.queryExecution.sparkPlan)
-            (df.schema, objProj, directExecutedPlan)
-          }
-        })
+      val (schema, deserializer, directExecutedPlan) = DirectSparkSession.cache.get(sqlText,
+        new Callable[(StructType, Expression, DirectPlan)] {
+        override def call(): (StructType, Expression, DirectPlan) = {
+          val df = sql(sqlText)
+          val dfMirror = ru.runtimeMirror(getClass.getClassLoader).reflect(df)
+          val deserializerLazyMethodSymbol =
+            ru.typeOf[DataFrame].member(ru.TermName("deserializer")).asMethod
+          val deserializerLazyMethodMirror =
+            dfMirror.reflectMethod(deserializerLazyMethodSymbol)
+          val deserializer = deserializerLazyMethodMirror().asInstanceOf[Expression]
+          val directExecutedPlan =
+            DirectPlanConverter.convert(df.queryExecution.sparkPlan)
+          (df.schema, deserializer, directExecutedPlan)
+        }
+      })
+
+      val objProj = GenerateSafeProjection.generate(deserializer :: Nil)
 
       // hold current active SparkSession
       DirectExecutionContext.get()
       val taskMemoryManager = new TaskMemoryManager(
-        UnifiedMemoryManager.apply(new SparkConf().set(MEMORY_OFFHEAP_ENABLED.key, "false"), 1),
+        DirectSparkSession.memoryManager,
         0)
       // prepare a TaskContext for execution
       TaskContext.setTaskContext(
@@ -150,6 +152,7 @@ class DirectSparkSession private (
     val schema = StructType(output.map(attr => StructField(attr.name, attr.dataType)))
     val converter = CatalystTypeConverters.createToScalaConverter(schema)
     val rows = data.par.map(converter(_).asInstanceOf[Row]).toArray
+
     DirectDataTable(schema, rows)
   }
 
@@ -181,9 +184,9 @@ class DirectSparkSession private (
   def executeAndRegisterTempView(sqlText: String, name: String): Int = {
     try {
       SparkSession.setActiveSession(this)
-      val (schema, objProj, directExecutedPlan) =
-        DirectSparkSession.cache.get(sqlText, new Callable[(StructType, Projection, DirectPlan)] {
-          override def call(): (StructType, Projection, DirectPlan) = {
+      val (schema, _, directExecutedPlan) = DirectSparkSession.cache.get(sqlText,
+        new Callable[(StructType, Expression, DirectPlan)] {
+          override def call(): (StructType, Expression, DirectPlan) = {
             val df = sql(sqlText)
             val dfMirror = ru.runtimeMirror(getClass.getClassLoader).reflect(df)
             val deserializerLazyMethodSymbol =
@@ -191,16 +194,16 @@ class DirectSparkSession private (
             val deserializerLazyMethodMirror =
               dfMirror.reflectMethod(deserializerLazyMethodSymbol)
             val deserializer = deserializerLazyMethodMirror().asInstanceOf[Expression]
-            val objProj = GenerateSafeProjection.generate(deserializer :: Nil)
-            val directExecutedPlan = DirectPlanConverter.convert(df.queryExecution.sparkPlan)
-            (df.schema, objProj, directExecutedPlan)
+            val directExecutedPlan =
+              DirectPlanConverter.convert(df.queryExecution.sparkPlan)
+            (df.schema, deserializer, directExecutedPlan)
           }
         })
 
       // hold current active SparkSession
       DirectExecutionContext.get()
       val taskMemoryManager = new TaskMemoryManager(
-        UnifiedMemoryManager.apply(new SparkConf().set(MEMORY_OFFHEAP_ENABLED.key, "false"), 1),
+        DirectSparkSession.memoryManager,
         0)
       // prepare a TaskContext for execution
       TaskContext.setTaskContext(
@@ -407,6 +410,11 @@ object DirectSparkSession extends Logging {
   private val cache = CacheBuilder
     .newBuilder()
     .maximumSize(1000)
-    .build[String, (StructType, Projection, DirectPlan)]()
+    .build[String, (StructType, Expression, DirectPlan)]()
+
+  val memoryManager =
+    UnifiedMemoryManager.apply(new SparkConf()
+      .set(MEMORY_OFFHEAP_ENABLED.key, "false")
+      .set("spark.buffer.pageSize", "1m"), 1)
 
 }

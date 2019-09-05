@@ -83,12 +83,20 @@ class DirectExecSuite extends TestBase {
 
   @Test
   def testJoin(): Unit = {
-    assertEquals("""
-        |select
-        |* from people t1
-        |join people2 t2
-        |on t1.name = t2.name
-        |""".stripMargin)
+//    assertEquals("""
+//        |select
+//        |* from people t1
+//        |join people2 t2
+//        |on t1.name = t2.name
+//        |""".stripMargin)
+    while (true) {
+      spark.sqlDirectly("""
+                     |select
+                     |* from people t1
+                     |join people2 t2
+                     |on t1.name = t2.name
+                     |""".stripMargin)
+    }
   }
 
   @Test
@@ -228,7 +236,7 @@ class DirectExecSuite extends TestBase {
   def testMultiThread(): Unit = {
     val sql =
       """
-        |select age, count(1) as cnt from
+        |select name, age, count(1) as cnt from
         |(
         |select
         |t1.name, t1.age
@@ -236,7 +244,9 @@ class DirectExecSuite extends TestBase {
         |join people2 t2
         |on
         |t1.age = t2.age
-        |) group by age
+        |) group by name, age
+        |order by name, age
+        |limit 1
         |""".stripMargin
     val exp = spark.sql(sql).collect().map(_.mkString(",")).mkString("\n")
     val service = Executors.newFixedThreadPool(10)
@@ -260,6 +270,7 @@ class DirectExecSuite extends TestBase {
 
   @Test
   def testMultiThread2(): Unit = {
+    spark.sql(s"CREATE TEMPORARY FUNCTION hive_strlen AS '${classOf[StrLen].getName}'")
     val sql =
       """
         |select age, count(1) as cnt from
@@ -271,31 +282,43 @@ class DirectExecSuite extends TestBase {
         |on
         |t1.age = t2.age
         |) group by age
+        |order by age
         |""".stripMargin
     val exp = spark.sql(sql).collect().map(_.mkString(",")).mkString("\n")
-    val service = Executors.newFixedThreadPool(10)
-    val latch = new CountDownLatch(10)
-    (0 until 10).foreach(_ => {
+    spark.sql(sql).explain()
+    val service = Executors.newFixedThreadPool(20)
+    val latch = new CountDownLatch(20)
+    (0 until 20).foreach(i => {
       service.submit(new Runnable {
         override def run(): Unit = {
-          val session = spark.newSession()
-          session
-            .createDataFrame(
-              Seq(("a", 2, 0), ("bbb", 2, 1), ("c", 3, 0), ("ddd", 4, 1), ("e", 5, 1)))
-            .toDF("name", "age", "genda")
-            .createOrReplaceTempView("people")
-          session
-            .createDataFrame(Seq(("a", 1, 0), ("b", 2, 1), ("c", 3, 0)))
-            .toDF("name", "age", "genda")
-            .createOrReplaceTempView("people2")
-          var startTime = System.currentTimeMillis()
-          val endTime = startTime + 30000
-          while (System.currentTimeMillis() < endTime) {
-            Assert.assertEquals(exp,
-              session.sqlDirectly(sql).data.map(_.mkString(",")).mkString("\n"))
-            startTime = System.currentTimeMillis()
+          try {
+            val session = spark.newSession()
+            session
+              .createDataFrame(
+                Seq(("a", 2, 0), ("bbb", 2, 1), ("c", 3, 0), ("ddd", 4, 1), ("e", 5, 1)))
+              .toDF("name", "age", "genda")
+              .createOrReplaceTempView("people")
+            session
+              .createDataFrame(Seq(("a", 1, 0), ("b", 2, 1), ("c", 3, 0)))
+              .toDF("name", "age", "genda")
+              .createOrReplaceTempView("people2")
+            var startTime = System.currentTimeMillis()
+            val endTime = startTime + 60000
+            while (System.currentTimeMillis() < endTime) {
+              Assert.assertEquals(exp,
+                session.sqlDirectly(sql).data.map(_.mkString(",")).mkString("\n")
+              )
+              startTime = System.currentTimeMillis()
+            }
+            println(i + "done")
+          } catch {
+            case e: Error => {
+              e.printStackTrace()
+              sys.exit()
+            }
+          } finally {
+            latch.countDown()
           }
-          latch.countDown()
         }
       })
     })
