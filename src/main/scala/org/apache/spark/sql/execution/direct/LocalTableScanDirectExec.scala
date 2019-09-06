@@ -33,6 +33,8 @@ case class LocalTableScanDirectExec(output: Seq[Attribute], name: TableIdentifie
           data
         case SubqueryAlias(_, LocalRelation(_, data, _)) =>
           data
+        case LocalRelation(_, data, _) =>
+          data
         case other => throw new RuntimeException("unexpected Relation[" + other + "]")
       }
     }
