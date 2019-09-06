@@ -254,12 +254,12 @@ class DirectExecSuite extends TestBase {
     (0 until 10).foreach(_ => {
       service.submit(new Runnable {
         override def run(): Unit = {
-          var startTime = System.currentTimeMillis()
-          val endTime = startTime + 30000
+          val endTime = System.currentTimeMillis() + 30000
           while (System.currentTimeMillis() < endTime) {
+            val l = System.currentTimeMillis()
             Assert.assertEquals(exp,
               spark.sqlDirectly(sql).data.map(_.mkString(",")).mkString("\n"))
-            startTime = System.currentTimeMillis()
+            println(System.currentTimeMillis() - l)
           }
           latch.countDown()
         }
@@ -305,10 +305,11 @@ class DirectExecSuite extends TestBase {
             var startTime = System.currentTimeMillis()
             val endTime = startTime + 60000
             while (System.currentTimeMillis() < endTime) {
+              val bTime = System.currentTimeMillis()
               Assert.assertEquals(exp,
                 session.sqlDirectly(sql).data.map(_.mkString(",")).mkString("\n")
               )
-              startTime = System.currentTimeMillis()
+              println(System.currentTimeMillis() - bTime)
             }
             println(i + "done")
           } catch {
