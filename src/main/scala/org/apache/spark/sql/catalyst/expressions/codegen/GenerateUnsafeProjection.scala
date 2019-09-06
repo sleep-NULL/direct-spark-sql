@@ -17,6 +17,8 @@
 
 package org.apache.spark.sql.catalyst.expressions.codegen
 
+import com.google.common.cache.{CacheBuilder, CacheLoader}
+
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.codegen.Block._
 import org.apache.spark.sql.types._
@@ -329,9 +331,9 @@ object GenerateUnsafeProjection extends CodeGenerator[Seq[Expression], UnsafePro
     create(references, subexpressionEliminationEnabled = false)
   }
 
-  private def create(
+  private def doCreate(
       expressions: Seq[Expression],
-      subexpressionEliminationEnabled: Boolean): UnsafeProjection = {
+      subexpressionEliminationEnabled: Boolean): ((GeneratedClass, Int), CodegenContext) = {
     val ctx = newCodeGenContext()
     val eval = createCode(ctx, expressions, subexpressionEliminationEnabled)
 
@@ -373,7 +375,23 @@ object GenerateUnsafeProjection extends CodeGenerator[Seq[Expression], UnsafePro
       new CodeAndComment(codeBody, ctx.getPlaceHolderToComments()))
     logDebug(s"code for ${expressions.mkString(",")}:\n${CodeFormatter.format(code)}")
 
-    val (clazz, _) = CodeGenerator.compile(code)
+    (CodeGenerator.compile(code), ctx)
+  }
+
+  private def create(
+                      expressions: Seq[Expression],
+                      subexpressionEliminationEnabled: Boolean): UnsafeProjection = {
+    val ((clazz, _), ctx) = cache.get((expressions, subexpressionEliminationEnabled))
     clazz.generate(ctx.references.toArray).asInstanceOf[UnsafeProjection]
   }
+
+  private val cache = CacheBuilder
+    .newBuilder()
+    .maximumSize(1000)
+    .build(new CacheLoader[(Seq[Expression], Boolean), ((GeneratedClass, Int), CodegenContext)] {
+      override def load(key: (Seq[Expression], Boolean)):
+      ((GeneratedClass, Int), CodegenContext) = {
+        doCreate(key._1, key._2)
+      }
+    })
 }
