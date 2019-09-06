@@ -89,14 +89,14 @@ class DirectExecSuite extends TestBase {
 //        |join people2 t2
 //        |on t1.name = t2.name
 //        |""".stripMargin)
-    while (true) {
+//    while (true) {
       spark.sqlDirectly("""
                      |select
                      |* from people t1
                      |join people2 t2
                      |on t1.name = t2.name
                      |""".stripMargin)
-    }
+//    }
   }
 
   @Test
