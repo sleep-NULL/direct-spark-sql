@@ -28,6 +28,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.JoinType
 import org.apache.spark.sql.execution.direct.{BinaryDirectExecNode, DirectExecutionContext, DirectPlan, DirectSQLMetrics}
 import org.apache.spark.sql.execution.joins.{DirectHashJoin, HashedRelation}
+import org.apache.spark.sql.SparkSession
 
 case class HashJoinDirectExec(
     leftKeys: Seq[Expression],
@@ -50,8 +51,7 @@ case class HashJoinDirectExec(
     val relation =
       HashedRelation(buildIter, buildKeys, taskMemoryManager = new TaskMemoryManager(
         new StaticMemoryManager(
-          new SparkConf().set(MEMORY_OFFHEAP_ENABLED.key, "false")
-            .set("spark.buffer.pageSize", "1m"),
+          DirectExecutionContext.get().activeSparkSession.sparkContext.conf,
           Long.MaxValue,
           Long.MaxValue,
           1),

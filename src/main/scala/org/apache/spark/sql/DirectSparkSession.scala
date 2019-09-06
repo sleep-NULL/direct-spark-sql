@@ -111,9 +111,7 @@ class DirectSparkSession private (
       // hold current active SparkSession
       DirectExecutionContext.get()
       val taskMemoryManager = new TaskMemoryManager(
-        UnifiedMemoryManager.apply(new SparkConf()
-          .set(MEMORY_OFFHEAP_ENABLED.key, "false")
-          .set("spark.buffer.pageSize", "1m"), 1),
+        UnifiedMemoryManager.apply(this.sparkContext.conf, 1),
         0)
       // prepare a TaskContext for execution
       TaskContext.setTaskContext(
@@ -205,9 +203,7 @@ class DirectSparkSession private (
       // hold current active SparkSession
       DirectExecutionContext.get()
       val taskMemoryManager = new TaskMemoryManager(
-        UnifiedMemoryManager.apply(new SparkConf()
-          .set(MEMORY_OFFHEAP_ENABLED.key, "false")
-          .set("spark.buffer.pageSize", "1m"), 1),
+        UnifiedMemoryManager.apply(this.sparkContext.conf, 1),
         0)
       // prepare a TaskContext for execution
       TaskContext.setTaskContext(
@@ -215,7 +211,7 @@ class DirectSparkSession private (
       val data = directExecutedPlan.execute().map(_.copy()).toSeq
       val plan = LocalRelation(schema.toAttributes, data)
       sessionState.catalog.createTempView(name, plan, true)
-      data.size
+      1
     } finally {
       DirectExecutionContext.get().markCompleted()
       TaskContext.unset()
