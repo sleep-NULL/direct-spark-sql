@@ -213,9 +213,7 @@ class DirectSparkSession private (
       TaskContext.setTaskContext(
         new TaskContextImpl(0, 0, 0, 0, 0, taskMemoryManager, new Properties, null))
       val data = directExecutedPlan.execute().map(_.copy()).toSeq
-      val plan = Dataset
-        .ofRows(self, LocalRelation(schema.toAttributes, data))
-        .logicalPlan
+      val plan = LocalRelation(schema.toAttributes, data)
       sessionState.catalog.createTempView(name, plan, true)
       data.size
     } finally {
