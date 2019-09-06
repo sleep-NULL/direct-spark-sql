@@ -19,6 +19,8 @@ package org.apache.spark.sql.catalyst.expressions.codegen
 
 import scala.annotation.tailrec
 
+import com.google.common.cache.{CacheBuilder, CacheLoader}
+
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.NoOp
@@ -143,7 +145,7 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
     case _ => ExprCode(FalseLiteral, input)
   }
 
-  protected def create(expressions: Seq[Expression]): Projection = {
+  private def doCreate(expressions: Seq[Expression]): Projection = {
     val ctx = newCodeGenContext()
     val expressionCodes = expressions.zipWithIndex.map {
       case (NoOp, _) => ""
@@ -153,10 +155,10 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
         evaluationCode.code +
           s"""
             if (${evaluationCode.isNull}) {
-              mutableRow.setNullAt($i);
+              mutableRowCopy.setNullAt($i);
             } else {
               ${converter.code}
-              ${CodeGenerator.setColumn("mutableRow", e.dataType, i, converter.value)};
+              ${CodeGenerator.setColumn("mutableRowCopy", e.dataType, i, converter.value)};
             }
           """
     }
@@ -185,8 +187,9 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
 
         public java.lang.Object apply(java.lang.Object _i) {
           InternalRow ${ctx.INPUT_ROW} = (InternalRow) _i;
+          InternalRow mutableRowCopy = mutableRow.copy();
           $allExpressions
-          return mutableRow;
+          return mutableRowCopy;
         }
 
         ${ctx.declareAddedFunctions()}
@@ -201,4 +204,17 @@ object GenerateSafeProjection extends CodeGenerator[Seq[Expression], Projection]
     val resultRow = new SpecificInternalRow(expressions.map(_.dataType))
     clazz.generate(ctx.references.toArray :+ resultRow).asInstanceOf[Projection]
   }
+
+  protected def create(expressions: Seq[Expression]): Projection = {
+    cache.get(expressions)
+  }
+
+  private val cache = CacheBuilder
+    .newBuilder()
+    .maximumSize(1000)
+    .build(new CacheLoader[Seq[Expression], Projection] {
+      override def load(key: Seq[Expression]): Projection = {
+        doCreate(key)
+      }
+    })
 }
