@@ -347,6 +347,16 @@ class DirectExecSuite extends TestBase {
         |""".stripMargin, true)
   }
 
+  @Test
+  def testNestLoop(): Unit = {
+    spark.sqlDirectly("""
+                        |select
+                        |* from people t1
+                        |join people2 t2
+                        |on t1.name = t2.name or t1.age  = t2.age
+                        |""".stripMargin)
+  }
+
 
 }
 class StrLen extends UDF {
